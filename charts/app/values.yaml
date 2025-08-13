@@ -1,0 +1,43 @@
+app:
+  name: sample-app
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: latest
+  pullPolicy: IfNotPresent
+
+ports:
+  http: 8080
+  metrics: 8081
+
+resources: {}
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels: {}
+
+podAnnotations: {}
+
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: http
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: http
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
