@@ -9,7 +9,36 @@ This repository provides a local, reproducible deployment system featuring:
 - Jenkins Pipelines that fail on failing Java tests
 - OpenTofu test coverage (native `tftest.hcl` tests)
 - Automatic Prometheus metrics & Grafana dashboards exposure for all apps
-- Fully local container image build + push (Kaniko) into an in-cluster, insecure registry (no external registry)
+
+## Container Image Registry (Minikube Addon + NodePort)
+Enable the built-in addon first:
+```
+minikube addons enable registry
+```
+OpenTofu creates a NodePort (`registry-nodeport`) pointing at the addon so the node runtime can pull via plain HTTP using `<minikube-ip>:32000` (default).
+
+Get IP & catalog:
+```bash
+MINIKUBE_IP=$(minikube ip)
+REGISTRY=${MINIKUBE_IP}:32000
+curl http://$REGISTRY/v2/_catalog || echo "(empty)"
+```
+Mark registry as insecure for containerd (if needed, after cluster start):
+```bash
+MINIKUBE_IP=$(minikube ip)
+minikube ssh -- "sudo mkdir -p /etc/containerd/certs.d/${MINIKUBE_IP}:32000 && cat <<EOF | sudo tee /etc/containerd/certs.d/${MINIKUBE_IP}:32000/hosts.toml
+server = \"http://${MINIKUBE_IP}:32000\"
+[host.\"http://${MINIKUBE_IP}:32000\"]
+  capabilities = [\"pull\", \"resolve\", \"push\"]
+EOF
+sudo systemctl restart containerd"
+```
+Recreate pods (or restart deployment) after enabling.
+
+To mirror/push images manually (example):
+```bash
+curl http://${REGISTRY}/v2/_catalog
+```
 
 ## Directory Structure
 ```
@@ -67,7 +96,6 @@ This will create:
 - Helm releases:
   - Jenkins (in `infra`)
   - kube-prometheus-stack (Prometheus + Alertmanager + Grafana) (in `infra`)
-- Local insecure registry `registry` (Deployment + NodePort Service 30050)
 
 ## 3. Access Jenkins & Grafana
 Forward services locally:

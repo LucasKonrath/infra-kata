@@ -30,37 +30,72 @@ spec:
     string(name: 'UPSTREAM_BASE_IMAGE', defaultValue: 'docker.io/library/eclipse-temurin:21-jre', description: 'Upstream public base image to mirror')
     string(name: 'MIRRORED_BASE_IMAGE', defaultValue: 'base/eclipse-temurin:21-jre', description: 'Internal mirrored base image path (suffix after registry host)')
     string(name: 'CHART_PATH', defaultValue: 'charts/app', description: 'Relative path to Helm chart within repo (searched if missing)')
-    string(name: 'REGISTRY_NODEPORT', defaultValue: '30050', description: 'NodePort exposed by registry service')
-    booleanParam(name: 'RESOLVE_MINIKUBE_IP', defaultValue: true, description: 'Auto-detect Minikube IP for registry host')
-    string(name: 'REGISTRY_HOST_OVERRIDE', defaultValue: '', description: 'Optional full registry host:port to use (takes precedence)')
+    string(name: 'REGISTRY_HOST_OVERRIDE', defaultValue: '', description: 'Optional manual registry host:port override (takes precedence)')
+    string(name: 'REGISTRY_NODEPORT', defaultValue: '32000', description: 'NodePort exposing the Minikube addon registry (must match infra)')
   }
 
   environment {
     KUBE_NAMESPACE = 'apps'
-    REGISTRY_HOST  = 'registry.infra.svc.cluster.local:5000' // placeholder; will be replaced
+    // IMAGE_TAG will be computed dynamically
   }
 
   stages {
     stage('Checkout') { steps { checkout scm } }
 
+    stage('Compute Image Tag') {
+      steps {
+        container('maven') { // any container with git available (mounted workspace)
+          script {
+            def sha = sh(script: 'git rev-parse --short=12 HEAD 2>/dev/null || echo none', returnStdout: true).trim()
+            if (sha == 'none' || !sha) {
+              sha = sh(script: 'date +%Y%m%d%H%M%S', returnStdout: true).trim()
+            }
+            env.IMAGE_TAG = sha + '-b' + env.BUILD_NUMBER
+            echo "Computed IMAGE_TAG=${env.IMAGE_TAG}"
+          }
+        }
+      }
+    }
+
     stage('Resolve Registry Host') {
       steps {
         container('helm') {
           script {
-            if (params.REGISTRY_HOST_OVERRIDE?.trim()) {
-              env.REGISTRY_HOST = params.REGISTRY_HOST_OVERRIDE.trim()
-              echo "Using explicit REGISTRY_HOST_OVERRIDE: ${env.REGISTRY_HOST}"
-            } else if (params.RESOLVE_MINIKUBE_IP) {
-              def ip = sh(script: 'minikube ip 2>/dev/null || true', returnStdout: true).trim()
-              if(!ip) {
-                ip = sh(script: 'kubectl get node -o jsonpath="{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}"', returnStdout: true).trim()
-              }
-              if(!ip) { error 'Could not resolve Minikube IP and no override provided.' }
-              env.REGISTRY_HOST = ip + ':' + params.REGISTRY_NODEPORT
-              echo "Resolved registry host (NodeIP:NodePort): ${env.REGISTRY_HOST}"
+            echo '--- Resolving registry host (debug) ---'
+            sh 'kubectl -n kube-system get svc registry -o wide || true'
+            sh 'kubectl get nodes -o wide || true'
+
+            echo "DEBUG: Param REGISTRY_HOST_OVERRIDE='${params.REGISTRY_HOST_OVERRIDE}'"
+            echo "DEBUG: Env VAR REGISTRY_HOST_OVERRIDE='${env.REGISTRY_HOST_OVERRIDE ?: ''}'"
+            echo "DEBUG: Initial env.REGISTRY_HOST='${env.REGISTRY_HOST ?: '(null)'}'"
+
+            def effectiveOverride = params.REGISTRY_HOST_OVERRIDE?.trim()
+            if (!effectiveOverride) { effectiveOverride = env.REGISTRY_HOST_OVERRIDE?.trim() }
+            echo "DEBUG: effectiveOverride='${effectiveOverride ?: ''}'"
+            if (effectiveOverride) {
+              effectiveOverride = effectiveOverride.replaceFirst(/^https?:\/\//,'')
+              env.REGISTRY_HOST = effectiveOverride
+              echo "Applied explicit override. env.REGISTRY_HOST=${env.REGISTRY_HOST}"
             } else {
-              echo "WARNING: Using default internal DNS registry host ${env.REGISTRY_HOST} (may fail for image pulls). Provide REGISTRY_HOST_OVERRIDE or enable RESOLVE_MINIKUBE_IP." 
+              def tryCmd = { label, cmd ->
+                def out = sh(script: cmd, returnStdout: true).trim()
+                echo "Attempt ${label}: '${out}'"
+                return out
+              }
+              def nodeIp = tryCmd('minikube ip', 'minikube ip 2>/dev/null || true')
+              if (!nodeIp) { nodeIp = tryCmd('jsonpath internalIP', "kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type==\"InternalIP\")].address}' 2>/dev/null || true") }
+              if (!nodeIp) { nodeIp = tryCmd('wide column 6', '''kubectl get nodes -o wide 2>/dev/null | awk 'NR==2 {print $6}' || true''') }
+              if (nodeIp) {
+                env.REGISTRY_HOST = nodeIp + ':' + params.REGISTRY_NODEPORT
+                echo "Auto-resolved registry host: ${env.REGISTRY_HOST}"
+              } else {
+                error 'Registry host could not be auto-resolved and no override provided.'
+              }
             }
+            if (!env.REGISTRY_HOST?.trim()) {
+              error "Registry host not set after resolution logic (effectiveOverride='${effectiveOverride ?: ''}')."
+            }
+            echo "Final REGISTRY_HOST: ${env.REGISTRY_HOST}"
           }
         }
       }
@@ -68,13 +103,8 @@ spec:
 
     stage('Mirror Base Image') {
       steps {
+        echo "DEBUG: Using REGISTRY_HOST in mirror stage = ${env.REGISTRY_HOST}"
         container('kaniko') {
-          script {
-            if (!params.MIRRORED_BASE_IMAGE?.trim()) {
-              error 'MIRRORED_BASE_IMAGE parameter is empty'
-            }
-            echo "Mirroring ${params.UPSTREAM_BASE_IMAGE} -> ${env.REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE} (insecure)"
-          }
           sh """
 cat > Dockerfile.mirror <<'EOF'
 FROM ${params.UPSTREAM_BASE_IMAGE}
@@ -83,7 +113,7 @@ EOF
 /kaniko/executor \
   --context=${WORKSPACE} \
   --dockerfile=${WORKSPACE}/Dockerfile.mirror \
-  --destination=${REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE} \
+  --destination=${env.REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE} \
   --insecure --insecure-pull
 """
         }
@@ -96,30 +126,25 @@ EOF
 
     stage('Package & Dockerfile') {
       steps {
+        echo "DEBUG: Using REGISTRY_HOST in package stage = ${env.REGISTRY_HOST}"
         container('maven') {
           sh 'mvn -B -DskipTests package'
           writeFile file: 'Dockerfile', text: """
-FROM ${REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE}
+FROM ${env.REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE}
 WORKDIR /app
 COPY target/*SNAPSHOT.jar app.jar
 EXPOSE 8080 8081
 ENTRYPOINT [\"java\",\"-jar\",\"/app/app.jar\"]
 """
-          echo "Generated Dockerfile using base image ${REGISTRY_HOST}/${params.MIRRORED_BASE_IMAGE}";
         }
       }
     }
 
     stage('Build Image (Kaniko)') {
       steps {
+        echo "DEBUG: Using REGISTRY_HOST in build image stage = ${env.REGISTRY_HOST} and IMAGE_TAG=${env.IMAGE_TAG}"
         container('kaniko') {
-          sh '''
-/kaniko/executor \
-  --context=${WORKSPACE} \
-  --dockerfile=${WORKSPACE}/Dockerfile \
-  --destination=${REGISTRY_HOST}/${APP_NAME}:latest \
-  --insecure --insecure-pull
-'''
+          sh "/kaniko/executor --context=${WORKSPACE} --dockerfile=${WORKSPACE}/Dockerfile --destination=${env.REGISTRY_HOST}/${params.APP_NAME}:${env.IMAGE_TAG} --destination=${env.REGISTRY_HOST}/${params.APP_NAME}:latest --insecure --insecure-pull"
         }
       }
     }
@@ -157,10 +182,21 @@ ENTRYPOINT [\"java\",\"-jar\",\"/app/app.jar\"]
     stage('Deploy (Helm)') {
       steps {
         container('helm') {
-          sh 'echo PWD=$(pwd) WORKSPACE=${WORKSPACE} && ls -1 ${WORKSPACE} || true'
-          sh 'helm upgrade --install ' + params.APP_NAME + ' ' + '${CHART_DIR}' + ' -n ' + KUBE_NAMESPACE + ' ' + \
-             '--set app.name=' + params.APP_NAME + ' --set image.repository=' + '${REGISTRY_HOST}/' + params.APP_NAME + ' --set image.tag=latest --set image.pullPolicy=IfNotPresent'
-          echo "Deployed image ${REGISTRY_HOST}/${params.APP_NAME}:latest"
+          script {
+            def imageRepo = "${env.REGISTRY_HOST}/${params.APP_NAME}"
+            def tag = env.IMAGE_TAG ?: 'latest'
+            echo "DEBUG: Preparing Helm deploy with imageRepo=${imageRepo} tag=${tag} chartDir=${env.CHART_DIR}"
+            sh """
+#!/bin/bash -e
+set -o pipefail
+echo "DEBUG: Deploy stage using imageRepo='${imageRepo}' TAG='${tag}' REGISTRY_HOST='${env.REGISTRY_HOST}' CHART_DIR='${env.CHART_DIR}'"
+helm upgrade --install ${params.APP_NAME} ${env.CHART_DIR} -n ${env.KUBE_NAMESPACE} \
+  --set app.name=${params.APP_NAME} \
+  --set image.repository=${imageRepo} \
+  --set image.tag=${tag} \
+  --set image.pullPolicy=IfNotPresent
+"""
+          }
         }
       }
     }

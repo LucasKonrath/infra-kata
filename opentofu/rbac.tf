@@ -51,14 +51,27 @@ resource "kubernetes_role_binding" "jenkins_deployer" {
   depends_on = [kubernetes_role.jenkins_deployer]
 }
 
-# Cluster-scope minimal read access so Jenkins can verify namespaces (Option B)
+# Cluster-scope minimal read access so Jenkins can verify namespaces, resolve node IP, and read registry service
 resource "kubernetes_cluster_role" "jenkins_namespaces_read" {
   metadata {
     name = "jenkins-namespaces-read"
   }
+  # existing namespaces rule
   rule {
     api_groups = [""]
     resources  = ["namespaces"]
+    verbs      = ["get", "list"]
+  }
+  # add nodes read for Minikube IP resolution
+  rule {
+    api_groups = [""]
+    resources  = ["nodes"]
+    verbs      = ["get", "list"]
+  }
+  # allow reading services/endpoints cluster-wide (registry in kube-system)
+  rule {
+    api_groups = [""]
+    resources  = ["services", "endpoints"]
     verbs      = ["get", "list"]
   }
 }

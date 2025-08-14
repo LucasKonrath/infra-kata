@@ -13,3 +13,7 @@ output "jenkins_url_hint" {
 output "grafana_url_hint" {
   value = "Run: kubectl -n ${kubernetes_namespace.infra.metadata[0].name} port-forward svc/kube-prometheus-stack-grafana 3000:80"
 }
+
+output "registry_nodeport_hint" {
+  value = "Registry: $(minikube ip):${var.registry_nodeport} (ensure containerd insecure hosts.toml)"
+}

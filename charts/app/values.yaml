@@ -24,6 +24,10 @@ metrics:
     enabled: true
     interval: 30s
     labels: {}
+    # Optional metricRelabelings to shape metrics labels (example provided adding 'application')
+    metricRelabelings: []
+  # When true, injects env vars to set Micrometer global tag 'application' and Spring application name
+  addApplicationTag: true
 
 podAnnotations: {}
 
