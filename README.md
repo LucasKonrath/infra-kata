@@ -97,17 +97,29 @@ This will create:
   - Jenkins (in `infra`)
   - kube-prometheus-stack (Prometheus + Alertmanager + Grafana) (in `infra`)
 
-## 3. Access Jenkins & Grafana
-Forward services locally:
+## 3. Access Jenkins, Grafana & Prometheus (Ingress – no port-forward)
+Enable the Minikube ingress controller once:
 ```bash
-kubectl -n infra port-forward svc/jenkins 8080:8080 &
-kubectl -n infra port-forward svc/kube-prometheus-stack-grafana 3000:80 &
+minikube addons enable ingress
+```
+Provision (or re-apply) infra so the Ingress object is created:
+```bash
+cd opentofu
+tofu apply -auto-approve
+```
+Get IP & open URLs (nip.io auto-resolves hostnames to the IP):
+```bash
+MINIKUBE_IP=$(minikube ip)
+echo "Jenkins:     http://jenkins.${MINIKUBE_IP}.nip.io"
+echo "Grafana:     http://grafana.${MINIKUBE_IP}.nip.io"
+echo "Prometheus:  http://prometheus.${MINIKUBE_IP}.nip.io"
 ```
 Retrieve Jenkins admin password:
 ```bash
 kubectl -n infra get secret jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d; echo
 ```
 Grafana credentials (default unless overridden): `admin/prom-operator`.
+Disable ingress if preferred by setting `enable_ingress = false` (then use port-forward or NodePorts).
 
 ## 4. Deploy an Example App (Manual Helm)
 ```bash

@@ -17,3 +17,15 @@ output "grafana_url_hint" {
 output "registry_nodeport_hint" {
   value = "Registry: $(minikube ip):${var.registry_nodeport} (ensure containerd insecure hosts.toml)"
 }
+
+output "ingress_hosts" {
+  value = var.enable_ingress ? {
+    jenkins    = local.jenkins_host
+    grafana    = local.grafana_host
+    prometheus = local.prometheus_host
+  } : {}
+}
+
+output "ingress_url_hint" {
+  value = var.enable_ingress ? "Open: http://jenkins.${local.ingress_domain_base} http://grafana.${local.ingress_domain_base} http://prometheus.${local.ingress_domain_base}" : "Ingress disabled"
+}

@@ -30,3 +30,15 @@ variable "registry_direct_nodeport" {
   default     = 32001
   description = "NodePort exposing registry container port 5000 directly (registry-direct service)"
 }
+
+variable "enable_ingress" {
+  type        = bool
+  default     = true
+  description = "Create a shared Ingress (jenkins/grafana/prometheus) using nip.io hosts."
+}
+
+variable "minikube_ip_override" {
+  type        = string
+  default     = ""
+  description = "Explicit Minikube IP to use for nip.io hostnames (skips shell lookup)."
+}
