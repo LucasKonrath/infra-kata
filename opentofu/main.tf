@@ -22,9 +22,13 @@ locals {
 resource "null_resource" "start_port_forwards" {
 	# Re-run if script content or dependent releases change
 	triggers = {
+		# Static triggers (still useful for context in state)
 		script_sha = filesha256("${path.root}/../scripts/port-forward.sh")
 		jenkins_id = try(helm_release.jenkins.id, "")
 		prom_id    = try(helm_release.kube_prometheus_stack.id, "")
+		force_bump = var.force_port_forward_refresh
+		# Always-run trigger: new UUID each plan so resource is replaced and provisioner re-executes
+		always_run = uuid()
 	}
 
 	provisioner "local-exec" {

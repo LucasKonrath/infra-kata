@@ -29,7 +29,7 @@ export const options = {
   },
 };
 
-const BASE_URL = __ENV.HELLO_BASE_URL || 'http://localhost:30090';
+const BASE_URL = __ENV.HELLO_BASE_URL || 'http://localhost:9000';
 
 export default function () {
   const res = http.get(`${BASE_URL}/api/hello`, { timeout: '5s' });

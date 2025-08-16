@@ -42,3 +42,9 @@ variable "minikube_ip_override" {
   default     = ""
   description = "Explicit Minikube IP to use for nip.io hostnames (skips shell lookup)."
 }
+
+variable "force_port_forward_refresh" {
+  type        = string
+  default     = ""
+  description = "Change this (e.g. set to a timestamp) to force re-running the port-forward null_resource."
+}
