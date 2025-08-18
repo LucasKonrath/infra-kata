@@ -1,13 +1,11 @@
 run "plan" {
   command = plan
-
   assert {
-    condition     = length(regexall("kubernetes_namespace.infra", run.stdout)) > 0
-    error_message = "Infra namespace not planned"
+    condition     = kubernetes_namespace.infra.metadata[0].name == var.jenkins_namespace
+    error_message = "Infra namespace name mismatch"
   }
-
   assert {
-    condition     = length(regexall("kubernetes_namespace.apps", run.stdout)) > 0
-    error_message = "Apps namespace not planned"
+    condition     = kubernetes_namespace.apps.metadata[0].name == var.apps_namespace
+    error_message = "Apps namespace name mismatch"
   }
 }

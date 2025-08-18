@@ -1,8 +1,11 @@
 run "plan" {
   command = plan
-
   assert {
-    condition     = length(regexall("helm_release.jenkins", run.stdout)) > 0
-    error_message = "Jenkins release not planned"
+    condition     = helm_release.jenkins.name == "jenkins"
+    error_message = "Jenkins release name mismatch"
+  }
+  assert {
+    condition     = helm_release.jenkins.namespace == kubernetes_namespace.infra.metadata[0].name
+    error_message = "Jenkins release not in infra namespace"
   }
 }

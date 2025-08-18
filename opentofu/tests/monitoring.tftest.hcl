@@ -1,8 +1,11 @@
 run "plan" {
   command = plan
-
   assert {
-    condition     = length(regexall("helm_release.kube_prometheus_stack", run.stdout)) > 0
-    error_message = "Monitoring stack release not planned"
+    condition     = helm_release.kube_prometheus_stack.version == "61.3.1"
+    error_message = "Prometheus stack version mismatch"
+  }
+  assert {
+    condition     = helm_release.kube_prometheus_stack.namespace == kubernetes_namespace.infra.metadata[0].name
+    error_message = "Prometheus stack not in infra namespace"
   }
 }
